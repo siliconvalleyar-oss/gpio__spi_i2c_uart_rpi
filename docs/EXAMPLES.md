@@ -1,103 +1,94 @@
-# RSYNC & Ejemplos de Uso
+# Usage Examples
 
-## Requisitos
-
-- `rsync` instalado en local y remoto.
-- `sshpass` instalado en local.
-- Acceso SSH a `pi@rpi2w.local`.
-- Contraseña configurada en `script_tools/.sshpass.env` o variable de entorno `SSHPASS`.
-
-## Configuración inicial
+## Run interactively
 
 ```bash
-# Opción 1: variable de entorno (solo sesión actual)
-export SSHPASS='tu-contraseña'
-
-# Opción 2: archivo local secreto (recomendado)
-cat > script_tools/.sshpass.env <<'EOF'
-SSHPASS='tu-contraseña'
-EOF
-chmod 600 script_tools/.sshpass.env
+cd gpios && sudo ./bin/gpio_generator
 ```
 
-> `SSHPASS` y `.sshpass.env` están en `.gitignore`. No los subas al repositorio.
+Aparece el menú interactivo:
 
-## Uso del script interactivo
+```
+Arrow keys to move, Space=toggle, Enter=confirm
+ [X] SPI
+  [ ] I2C
+  [ ] UART
+  [ ] 1-Wire
+  [ ] PWM
+```
+
+- `↑/↓` mover cursor
+- `Espacio` marcar/desmarcar
+- `Enter` confirmar
+- `Ctrl+C` cancelar
+
+Luego pide duración:
+
+```
+Duration in seconds (default 10):
+```
+
+## Sin menú interactivo (todos los protocolos)
 
 ```bash
+sudo ./gpios/bin/gpio_generator 60 --all
+```
+
+## Solo duración (con menú)
+
+```bash
+sudo ./gpios/bin/gpio_generator 30
+```
+
+## Compilar y ejecutar en una línea
+
+```bash
+make -C gpios clean && make -C gpios -j4 && sudo ./gpios/bin/gpio_generator
+```
+
+## Transferir a Raspberry Pi con rsync
+
+```bash
+# Configurar contraseña (una vez)
+export SSHPASS='tu-contraseña'
+
+# Transferir proyecto completo
+rsync -avzP --rsh="sshpass -e ssh" gpio_generator_16bits/ pi@rpi2w.local:/home/pi/src/
+
+# O usar el script interactivo
 ./script_tools/rsync.sh
 ```
 
-### Menú principal
-
-1. Transferir proyecto completo
-2. Transferir carpeta específica
-3. Transferir archivo(s) específico(s)
-4. Configurar contraseña SSH (SSHPASS)
-5. Ver ejemplos de uso
-0. Salir
-
-## Ejemplos de transferencia
-
-### Proyecto completo
+## Compilación remota
 
 ```bash
-export SSHPASS='tu-contraseña'
-rsync -avzP --rsh="sshpass -e ssh" gpio_generator_16bits/ pi@rpi2w.local:/home/pi/src/
+sshpass -e ssh pi@rpi2w.local \
+  "cd /home/pi/src/gpio__spi_i2c_uart_rpi && git pull && make clean && make -j4"
 ```
 
-### Solo carpeta `gpios/`
+## Instalar dependencias en la Pi
 
 ```bash
-export SSHPASS='tu-contraseña'
-rsync -avzP --rsh="sshpass -e ssh" gpio_generator_16bits/gpios/ pi@rpi2w.local:/home/pi/src/gpio_generator_16bits/gpios/
+./script_tools/install_deps.sh
 ```
 
-### Archivo específico
+## Ver pines GPIO activos
 
-```bash
-export SSHPASS='tu-contraseña'
-rsync -avzP --rsh="sshpass -e ssh" gpio_generator_16bits/gpios/Makefile pi@rpi2w.local:/home/pi/src/gpio_generator_16bits/gpios/Makefile
-```
-
-## Compilar en la Raspberry Pi
-
-```bash
-ssh pi@rpi2w.local
-cd /home/pi/src/gpio_generator_16bits/gpios
-make clean && make
-```
-
-## Ejecutar en la Raspberry Pi
-
-```bash
-# Duración por defecto: 120 segundos
-cd /home/pi/src/gpio_generator_16bits/gpios
-sudo ./bin/gpio_generator
-
-# Duración personalizada: 60 segundos
-sudo ./bin/gpio_generator 60
-
-# 5 minutos
-sudo ./bin/gpio_generator 300
-```
-
-## Parámetros de salida
-
-El programa imprime en consola líneas como:
+Al iniciar, la app muestra qué pines está usando:
 
 ```
-[SPI] TX=0x3A RX=0x7F
-[I2C] Wrote 0xA1
-[UART] Sent 6 bytes
-[1W] Presence, wrote 0x55
-[GPIO] Port16=0b1100110010101101 0xCAD5
+GPIO pins: 12 (0,1,5,6,16,17,22,23,24,25,26,27)
 ```
 
-## Notas
+## Output durante ejecución
 
-- SPI rota con una fase cada 4 ticks.
-- I2C, UART y 1-Wire se ejecutan de a uno por tick.
-- Los 16 GPIO reflejan un valor aleatorio cada tick.
-- Cada tick dura ~10 ms.
-- El programa termina automáticamente al cumplirse el tiempo configurado.
+```
+=== GPIO Generator ===
+Start:  2026-07-29 18:22:50
+GPIO pins: 16 (0,1,2,3,5,6,12,13,14,15,16,17,22,23,24,25)
+SPI enabled
+1-Wire enabled
+Duration: 10s
+Press Ctrl+C to stop.
+Done. Time: 2026-07-29 18:23:00  Total ticks: 1000
+```
