@@ -65,42 +65,36 @@ static std::set<int> ask_protocols() {
         return selected;
     }
 
-    std::cout << "\n=== Signal Generator ===\n";
-    std::cout << "Select protocols (space-separated numbers, enter=all):\n";
-    std::cout << "  1 - SPI\n";
-    std::cout << "  2 - I2C\n";
-    std::cout << "  3 - UART\n";
-    std::cout << "  4 - 1-Wire\n";
-    std::cout << "  5 - PWM\n";
-    std::cout << "  0 - All (default)\n";
-    std::cout << "> " << std::flush;
+    const char* names[] = {"SPI", "I2C", "UART", "1-Wire", "PWM"};
+    const int N = 5;
 
-    char buf[64] = {0};
-    size_t len = 0;
-    if (!timed_read(buf, sizeof(buf), len, 10000)) {
-        std::cout << "All\n";
-        selected.insert({1, 2, 3, 4, 5});
-        return selected;
-    }
+    while (true) {
+        std::cout << "\n=== Protocol Selection (enter=confirm) ===\n";
+        for (int i = 0; i < N; ++i) {
+            std::cout << (selected.count(i + 1) ? " [X]" : " [ ]")
+                      << " " << (i + 1) << " - " << names[i] << "\n";
+        }
+        std::cout << "> " << std::flush;
 
-    if (buf[0] == '0') {
-        selected.insert({1, 2, 3, 4, 5});
-        return selected;
-    }
+        char buf[16] = {0};
+        size_t len = 0;
+        if (!timed_read(buf, sizeof(buf), len, 30000)) {
+            return selected;
+        }
 
-    char* p = buf;
-    while (*p) {
-        while (*p == ' ') ++p;
-        if (!*p) break;
+        if (len == 0) {
+            break;
+        }
+
         char* end = nullptr;
-        long v = std::strtol(p, &end, 10);
-        if (v >= 1 && v <= 5) selected.insert(static_cast<int>(v));
-        p = end;
-    }
-
-    if (selected.empty()) {
-        std::cout << "Defaulting to all.\n";
-        selected.insert({1, 2, 3, 4, 5});
+        long v = std::strtol(buf, &end, 10);
+        if (end && *end == '\0' && v >= 1 && v <= N) {
+            int idx = static_cast<int>(v);
+            if (selected.count(idx))
+                selected.erase(idx);
+            else
+                selected.insert(idx);
+        }
     }
     return selected;
 }
