@@ -25,9 +25,8 @@ UartHandle make(const Config& cfg) {
         return UartHandle(nullptr);
     }
 
-    speed_t speed = static_cast<speed_t>(cfg.baud);
-    cfsetispeed(&tio, speed);
-    cfsetospeed(&tio, speed);
+    cfsetispeed(&tio, static_cast<speed_t>(cfg.baud));
+    cfsetospeed(&tio, static_cast<speed_t>(cfg.baud));
 
     tio.c_cflag |= (CLOCAL | CREAD);
     tio.c_cflag &= ~PARENB;

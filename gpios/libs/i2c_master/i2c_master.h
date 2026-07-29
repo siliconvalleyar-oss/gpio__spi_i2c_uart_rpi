@@ -2,13 +2,12 @@
 
 #include <cstdint>
 #include <memory>
-#include <vector>
 
 namespace I2C_MASTER {
 
 struct Config {
     uint8_t slave_addr = 0x20;
-    uint32_t speed_hz = 2500;
+    uint16_t clock_divider = 2500;
 };
 
 struct I2c {

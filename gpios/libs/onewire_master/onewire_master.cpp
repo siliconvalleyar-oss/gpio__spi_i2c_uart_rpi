@@ -5,18 +5,13 @@
 
 namespace ONEWIRE_MASTER {
 
-void OneWireDeleter::operator()(OneWire*) const noexcept {
-    destroy(nullptr);
+void OneWireDeleter::operator()(OneWire* p) const noexcept {
+    destroy(p);
 }
 
 OneWireHandle make(const Config& cfg) {
     auto ow = std::make_unique<OneWire>();
     ow->cfg = cfg;
-
-    if (!bcm2835_init()) {
-        std::cerr << "bcm2835 init failed for OneWire\n";
-        return OneWireHandle(nullptr);
-    }
 
     bcm2835_gpio_fsel(ow->cfg.pin, BCM2835_GPIO_FSEL_OUTP);
     bcm2835_gpio_write(ow->cfg.pin, HIGH);
@@ -24,8 +19,11 @@ OneWireHandle make(const Config& cfg) {
     return OneWireHandle(ow.release());
 }
 
-void destroy(OneWire*) {
-    bcm2835_close();
+void destroy(OneWire* ow) {
+    if (!ow) return;
+    bcm2835_gpio_fsel(ow->cfg.pin, BCM2835_GPIO_FSEL_INPT);
+    bcm2835_gpio_set_pud(ow->cfg.pin, BCM2835_GPIO_PUD_UP);
+    delete ow;
 }
 
 bool reset(OneWire& ow) {

@@ -4,8 +4,8 @@
 
 namespace I2C_MASTER {
 
-void I2cDeleter::operator()(I2c*) const noexcept {
-    destroy(nullptr);
+void I2cDeleter::operator()(I2c* p) const noexcept {
+    destroy(p);
 }
 
 I2cHandle make(const Config& cfg) {
@@ -13,14 +13,16 @@ I2cHandle make(const Config& cfg) {
     i2c->cfg = cfg;
 
     bcm2835_i2c_begin();
-    bcm2835_i2c_setClockDivider(cfg.speed_hz);
+    bcm2835_i2c_setClockDivider(cfg.clock_divider);
     bcm2835_i2c_setSlaveAddress(cfg.slave_addr);
     i2c->init_ok = true;
     return I2cHandle(i2c.release());
 }
 
-void destroy(I2c*) {
+void destroy(I2c* i) {
+    if (!i) return;
     bcm2835_i2c_end();
+    delete i;
 }
 
 bool write(const I2c& i2c, const uint8_t* data, uint32_t len) {
