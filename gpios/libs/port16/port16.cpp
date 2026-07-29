@@ -39,10 +39,10 @@ void write_random(Port16& p) {
     std::uniform_int_distribution<uint32_t> dist(0, (1u << p.cfg.pins.size()) - 1);
     std::mt19937 rng(static_cast<unsigned>(
         std::chrono::high_resolution_clock::now().time_since_epoch().count()));
-    write(p, static_cast<uint16_t>(dist(rng)));
+    write(p, dist(rng));
 }
 
-void write(Port16& p, uint16_t value) {
+void write(Port16& p, uint32_t value) {
     if (!p.init_ok || p.cfg.as_input) return;
 
     for (size_t i = 0; i < p.cfg.pins.size(); ++i) {
@@ -50,10 +50,10 @@ void write(Port16& p, uint16_t value) {
     }
 }
 
-uint16_t read(const Port16& p) {
+uint32_t read(const Port16& p) {
     if (!p.init_ok || !p.cfg.as_input) return 0;
 
-    uint16_t value = 0;
+    uint32_t value = 0;
     for (size_t i = 0; i < p.cfg.pins.size(); ++i) {
         if (bcm2835_gpio_lev(p.cfg.pins[i]) == HIGH) {
             value |= (1u << i);

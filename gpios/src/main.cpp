@@ -2,10 +2,10 @@
 #include <iostream>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <chrono>
 #include <random>
-#include <thread>
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/time.h>
@@ -61,16 +61,17 @@ static bool timed_read(char* buf, size_t bufsz, size_t& out_len, int timeout_ms)
 static std::set<int> ask_protocols() {
     std::set<int> selected;
     if (!is_interactive()) {
-        selected.insert({1, 2, 3, 4});
+        selected.insert({1, 2, 3, 4, 5});
         return selected;
     }
 
-    std::cout << "\n=== GPIO 16-bit Signal Generator ===\n";
-    std::cout << "Select protocols to enable (space-separated numbers):\n";
+    std::cout << "\n=== Signal Generator ===\n";
+    std::cout << "Select protocols (space-separated numbers, enter=all):\n";
     std::cout << "  1 - SPI\n";
     std::cout << "  2 - I2C\n";
     std::cout << "  3 - UART\n";
     std::cout << "  4 - 1-Wire\n";
+    std::cout << "  5 - PWM\n";
     std::cout << "  0 - All (default)\n";
     std::cout << "> " << std::flush;
 
@@ -78,12 +79,12 @@ static std::set<int> ask_protocols() {
     size_t len = 0;
     if (!timed_read(buf, sizeof(buf), len, 10000)) {
         std::cout << "All\n";
-        selected.insert({1, 2, 3, 4});
+        selected.insert({1, 2, 3, 4, 5});
         return selected;
     }
 
     if (buf[0] == '0') {
-        selected.insert({1, 2, 3, 4});
+        selected.insert({1, 2, 3, 4, 5});
         return selected;
     }
 
@@ -92,14 +93,14 @@ static std::set<int> ask_protocols() {
         while (*p == ' ') ++p;
         if (!*p) break;
         char* end = nullptr;
-        long v = strtol(p, &end, 10);
-        if (v >= 1 && v <= 4) selected.insert(static_cast<int>(v));
+        long v = std::strtol(p, &end, 10);
+        if (v >= 1 && v <= 5) selected.insert(static_cast<int>(v));
         p = end;
     }
 
     if (selected.empty()) {
         std::cout << "Defaulting to all.\n";
-        selected.insert({1, 2, 3, 4});
+        selected.insert({1, 2, 3, 4, 5});
     }
     return selected;
 }
@@ -127,20 +128,19 @@ static void set_low_priority() {
     sched_yield();
 }
 
-// Map protocol number to the set of GPIO pins it reserves
 static const std::vector<int>& pins_for_protocol(int proto) {
     static const std::vector<int> spi_pins   = {7, 8, 9, 10, 11};
     static const std::vector<int> i2c_pins   = {2, 3};
     static const std::vector<int> uart_pins  = {14, 15};
     static const std::vector<int> onewire_pins = {4};
-    // I2S (PCM) pins 18-21 are always reserved to avoid audio conflicts
-    static const std::vector<int> i2s_pins   = {18, 19, 20, 21};
+    static const std::vector<int> pwm_pins   = {12, 13};
     static const std::vector<int> empty;
     switch (proto) {
         case 1: return spi_pins;
         case 2: return i2c_pins;
         case 3: return uart_pins;
         case 4: return onewire_pins;
+        case 5: return pwm_pins;
         default: return empty;
     }
 }
@@ -152,7 +152,6 @@ static std::vector<uint16_t> available_gpio_pins(const std::set<int>& active_pro
             reserved.insert(static_cast<uint16_t>(pin));
         }
     }
-    // Always reserve I2S pins (18-21) regardless of selection
     static const std::vector<int> i2s = {18, 19, 20, 21};
     for (int pin : i2s) reserved.insert(static_cast<uint16_t>(pin));
 
@@ -188,7 +187,7 @@ int main(int argc, char** argv) {
 
     std::set<int> protocols;
     if (argc > 2 && strcmp(argv[2], "--all") == 0) {
-        protocols.insert({1, 2, 3, 4});
+        protocols.insert({1, 2, 3, 4, 5});
     } else {
         protocols = ask_protocols();
     }
@@ -202,10 +201,14 @@ int main(int argc, char** argv) {
     bool use_i2c    = protocols.count(2);
     bool use_uart   = protocols.count(3);
     bool use_onewire = protocols.count(4);
+    bool use_pwm    = protocols.count(5);
 
     std::vector<uint16_t> gpio_pins = available_gpio_pins(protocols);
+    if (gpio_pins.size() > 16) {
+        gpio_pins.resize(16);
+    }
     if (gpio_pins.empty()) {
-        std::cerr << "ERROR: no GPIO pins available after reserving peripherals\n";
+        std::cerr << "ERROR: no GPIO pins available\n";
         bcm2835_close();
         return 1;
     }
@@ -245,10 +248,23 @@ int main(int argc, char** argv) {
         ow = ONEWIRE_MASTER::make(owcfg);
     }
 
+    static const int PWM_RANGE = 256;
+
+    if (use_pwm) {
+        for (int pin : {12, 13}) {
+            bcm2835_gpio_fsel(pin, BCM2835_GPIO_FSEL_ALT0);
+        }
+        bcm2835_pwm_set_clock(192);
+        bcm2835_pwm_set_mode(0, 1, 1);
+        bcm2835_pwm_set_range(0, PWM_RANGE);
+        bcm2835_pwm_set_mode(1, 1, 1);
+        bcm2835_pwm_set_range(1, PWM_RANGE);
+    }
+
     std::time_t now_c = std::time(nullptr);
     std::cout << "\n=== GPIO Generator ===\n";
     std::cout << "Start:  " << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S") << "\n";
-    std::cout << "GPIO pins active: " << gpio_pins.size() << " (";
+    std::cout << "GPIO pins: " << gpio_pins.size() << " (";
     for (size_t i = 0; i < gpio_pins.size(); ++i) {
         if (i) std::cout << ",";
         std::cout << static_cast<int>(gpio_pins[i]);
@@ -258,6 +274,7 @@ int main(int argc, char** argv) {
     if (use_i2c)    std::cout << "I2C enabled\n";
     if (use_uart)   std::cout << "UART enabled\n";
     if (use_onewire) std::cout << "1-Wire enabled\n";
+    if (use_pwm)    std::cout << "PWM enabled (GPIO 12,13)\n";
     std::cout << "Duration: " << duration_s << "s\n";
     std::cout << "Press Ctrl+C to stop.\n";
 
@@ -272,6 +289,11 @@ int main(int argc, char** argv) {
 
     while (running && std::chrono::steady_clock::now() < end_time) {
         PORT16::write_random(*port16);
+
+        if (use_pwm) {
+            bcm2835_pwm_set_data(0, dist_val(rng) % PWM_RANGE);
+            bcm2835_pwm_set_data(1, dist_val(rng) % PWM_RANGE);
+        }
 
         if (spi && phase == 0) {
             uint8_t tx = static_cast<uint8_t>(dist_val(rng));
@@ -304,6 +326,16 @@ int main(int argc, char** argv) {
             ts.tv_sec = 0;
             ts.tv_nsec = (target - elapsed) * 1000000L;
             nanosleep(&ts, nullptr);
+        }
+    }
+
+    if (use_pwm) {
+        bcm2835_pwm_set_data(0, 0);
+        bcm2835_pwm_set_data(1, 0);
+        bcm2835_pwm_set_mode(0, 1, 0);
+        bcm2835_pwm_set_mode(1, 1, 0);
+        for (int pin : {12, 13}) {
+            bcm2835_gpio_fsel(pin, BCM2835_GPIO_FSEL_INPT);
         }
     }
 
