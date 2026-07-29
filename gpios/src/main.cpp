@@ -30,6 +30,57 @@ static void onSignal(int) {
     running = 0;
 }
 
+#include <termios.h>
+
+enum { KEY_NONE = -1, KEY_UP = 1000, KEY_DOWN, KEY_ENTER = '\n', KEY_SPACE = ' ',
+       KEY_CTRLC = 0x03 };
+
+static struct termios orig_tio;
+static bool terminal_raw = false;
+
+static void restore_terminal() {
+    if (terminal_raw) {
+        terminal_raw = false;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_tio);
+        std::cout << "\033[?25h" << std::flush;
+    }
+}
+
+static void set_raw_mode() {
+    tcgetattr(STDIN_FILENO, &orig_tio);
+    struct termios raw = orig_tio;
+    raw.c_lflag &= ~(ECHO | ICANON | ISIG);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    terminal_raw = true;
+    std::cout << "\033[?25l" << std::flush;
+}
+
+static int read_key() {
+    char c;
+    while (running) {
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n == 1) {
+            if (c == '\033') {
+                char seq[2];
+                if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\033';
+                if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\033';
+                if (seq[0] == '[') {
+                    switch (seq[1]) {
+                        case 'A': return KEY_UP;
+                        case 'B': return KEY_DOWN;
+                    }
+                }
+                return '\033';
+            }
+            return static_cast<unsigned char>(c);
+        }
+        if (n < 0 && errno != EINTR) break;
+    }
+    return KEY_NONE;
+}
+
 static bool is_interactive() {
     return isatty(STDIN_FILENO) == 1;
 }
@@ -67,35 +118,45 @@ static std::set<int> ask_protocols() {
 
     const char* names[] = {"SPI", "I2C", "UART", "1-Wire", "PWM"};
     const int N = 5;
+    int cur = 0;
 
-    while (true) {
-        std::cout << "\n=== Protocol Selection (enter=confirm) ===\n";
+    auto draw = [&]() {
+        std::cout << "\033[J";
+        std::cout << "Arrow keys to move, Space=toggle, Enter=confirm\n";
         for (int i = 0; i < N; ++i) {
-            std::cout << (selected.count(i + 1) ? " [X]" : " [ ]")
-                      << " " << (i + 1) << " - " << names[i] << "\n";
+            std::cout << (i == cur ? " \033[7m" : "  ")
+                      << (selected.count(i + 1) ? "[X]" : "[ ]")
+                      << " " << names[i]
+                      << (i == cur ? "\033[0m" : "")
+                      << "\n";
         }
-        std::cout << "> " << std::flush;
+    };
 
-        char buf[16] = {0};
-        size_t len = 0;
-        if (!timed_read(buf, sizeof(buf), len, 30000)) {
-            return selected;
-        }
+    set_raw_mode();
+    draw();
 
-        if (len == 0) {
+    while (running) {
+        int key = read_key();
+        if (key == KEY_UP && cur > 0) { --cur; draw(); }
+        else if (key == KEY_DOWN && cur < N - 1) { ++cur; draw(); }
+        else if (key == KEY_SPACE) {
+            int idx = cur + 1;
+            if (selected.count(idx)) selected.erase(idx);
+            else selected.insert(idx);
+            draw();
+        } else if (key == KEY_ENTER || key == '\r') {
+            break;
+        } else if (key == KEY_CTRLC) {
+            selected.clear();
+            break;
+        } else if (key == KEY_NONE) {
             break;
         }
-
-        char* end = nullptr;
-        long v = std::strtol(buf, &end, 10);
-        if (end && *end == '\0' && v >= 1 && v <= N) {
-            int idx = static_cast<int>(v);
-            if (selected.count(idx))
-                selected.erase(idx);
-            else
-                selected.insert(idx);
-        }
     }
+
+    // Move cursor past the menu
+    std::cout << "\033[" << (N + 1) << "B";
+    restore_terminal();
     return selected;
 }
 
