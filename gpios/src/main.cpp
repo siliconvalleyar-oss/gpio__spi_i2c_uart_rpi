@@ -119,9 +119,14 @@ static std::set<int> ask_protocols() {
     const char* names[] = {"SPI", "I2C", "UART", "1-Wire", "PWM"};
     const int N = 5;
     int cur = 0;
+    bool first_draw = true;
 
     auto draw = [&]() {
-        std::cout << "\033[J";
+        if (!first_draw) {
+            std::cout << "\033[" << (N + 1) << "A";
+        }
+        first_draw = false;
+        std::cout << "\r\033[J";
         std::cout << "Arrow keys to move, Space=toggle, Enter=confirm\n";
         for (int i = 0; i < N; ++i) {
             std::cout << (i == cur ? " \033[7m" : "  ")
@@ -130,6 +135,7 @@ static std::set<int> ask_protocols() {
                       << (i == cur ? "\033[0m" : "")
                       << "\n";
         }
+        std::cout << std::flush;
     };
 
     set_raw_mode();
@@ -154,7 +160,6 @@ static std::set<int> ask_protocols() {
         }
     }
 
-    // Move cursor past the menu
     std::cout << "\033[" << (N + 1) << "B";
     restore_terminal();
     return selected;
