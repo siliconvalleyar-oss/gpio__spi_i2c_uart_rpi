@@ -1,0 +1,43 @@
+# Build artifacts
+*.o
+*.d
+*.a
+*.so
+*.exe
+*.out
+obj/
+bin/
+build/
+logs/
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+*.user
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+prompt.md
+token.md
+fix.sh
+compile_remote.sh
+
+# OpenCode
+.opencode/
+
+# Temporary
+*.tmp
+*.bak
+*.old
+PDLS_EXT3_Basic_Global-main/
+
+# Secrets / local config
+script_tools/.sshpass.env
+script_tools/.env
