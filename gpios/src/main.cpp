@@ -23,6 +23,9 @@
 #include <i2c_master/i2c_master.h>
 #include <uart_master/uart_master.h>
 #include <onewire_master/onewire_master.h>
+#include <config/config.h>
+
+static const char* CONFIG_PATH = "config.cfg";
 
 static volatile std::sig_atomic_t running = 1;
 
@@ -224,6 +227,45 @@ static std::vector<uint16_t> available_gpio_pins(const std::set<int>& active_pro
     return avail;
 }
 
+static int main_menu(AppConfig& cfg) {
+    const char* items[] = {"Select protocols and run", "Configure ports", "Quit"};
+    const int N = 3;
+    int cur = 0;
+    bool first = true;
+    int result = -1;
+
+    auto draw = [&]() {
+        if (!first) std::cout << "\033[" << (N + 2) << "A";
+        first = false;
+        std::cout << "\r\033[J";
+        std::cout << "GPIO Generator — Main Menu\n\n";
+        for (int i = 0; i < N; ++i) {
+            std::cout << (i == cur ? " \033[7m" : "  ")
+                      << items[i]
+                      << (i == cur ? "\033[0m" : "") << "\n";
+        }
+        std::cout << std::flush;
+    };
+
+    set_raw_mode();
+    draw();
+
+    while (result < 0 && running) {
+        int key = read_key();
+        if (key == KEY_UP && cur > 0) --cur;
+        else if (key == KEY_DOWN && cur < N - 1) ++cur;
+        else if (key == KEY_ENTER || key == '\r') result = cur;
+        else if (key == KEY_CTRLC) result = 2;
+        else if (key == 'q' || key == 'Q') result = 2;
+        else continue;
+        if (result < 0) draw();
+    }
+
+    std::cout << "\033[" << (N + 2) << "B";
+    restore_terminal();
+    return result;
+}
+
 int main(int argc, char** argv) {
     int duration_s = 10;
     if (argc > 1) {
@@ -238,6 +280,8 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, onSignal);
     std::signal(SIGHUP, onSignal);
 
+    AppConfig cfg = load_config(CONFIG_PATH);
+
     if (!bcm2835_init()) {
         std::cerr << "ERROR: bcm2835_init() failed (run as root?)\n";
         return 1;
@@ -246,16 +290,34 @@ int main(int argc, char** argv) {
     set_low_priority();
 
     std::set<int> protocols;
+
     if (argc > 2 && strcmp(argv[2], "--all") == 0) {
         protocols.insert({1, 2, 3, 4, 5});
-    } else {
-        protocols = ask_protocols();
+    } else if (argc > 2 && strcmp(argv[2], "--quick") == 0) {
+        // skip menus
+    } else if (is_interactive()) {
+        while (running) {
+            int choice = main_menu(cfg);
+            if (choice == 0) {
+                protocols = ask_protocols();
+                if (protocols.empty()) continue;
+                break;
+            } else if (choice == 1) {
+                bool changed = config_menu(cfg);
+                if (changed) save_config(CONFIG_PATH, cfg);
+                continue;
+            } else {
+                bcm2835_close();
+                return 0;
+            }
+        }
     }
-    if (!running) return 0;
+
+    if (!running) { bcm2835_close(); return 0; }
 
     int dur = ask_duration();
     if (dur > 0) duration_s = dur;
-    if (!running) return 0;
+    if (!running) { bcm2835_close(); return 0; }
 
     bool use_spi    = protocols.count(1);
     bool use_i2c    = protocols.count(2);
@@ -264,9 +326,7 @@ int main(int argc, char** argv) {
     bool use_pwm    = protocols.count(5);
 
     std::vector<uint16_t> gpio_pins = available_gpio_pins(protocols);
-    if (gpio_pins.size() > 16) {
-        gpio_pins.resize(16);
-    }
+    if (gpio_pins.size() > 16) gpio_pins.resize(16);
     if (gpio_pins.empty()) {
         std::cerr << "ERROR: no GPIO pins available\n";
         bcm2835_close();
@@ -281,7 +341,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<SPI_MASTER::Spi, SPI_MASTER::SpiDeleter> spi;
     if (use_spi) {
         SPI_MASTER::Config spicfg{};
-        spicfg.speed_hz = 500000;
+        spicfg.speed_hz = cfg.spi_speed_hz;
         spi = SPI_MASTER::make(spicfg);
     }
 
@@ -289,36 +349,34 @@ int main(int argc, char** argv) {
     if (use_i2c) {
         I2C_MASTER::Config i2ccfg{};
         i2ccfg.slave_addr = 0x20;
-        i2ccfg.clock_divider = 2500;
+        i2ccfg.clock_divider = cfg.i2c_clock_divider;
         i2c = I2C_MASTER::make(i2ccfg);
     }
 
     std::unique_ptr<UART_MASTER::Uart, UART_MASTER::UartDeleter> uart;
     if (use_uart) {
         UART_MASTER::Config ucfg{};
-        ucfg.device = "/dev/serial0";
-        ucfg.baud = 115200;
+        ucfg.device = cfg.uart_device;
+        ucfg.baud = cfg.uart_baud;
         uart = UART_MASTER::make(ucfg);
     }
 
     std::unique_ptr<ONEWIRE_MASTER::OneWire, ONEWIRE_MASTER::OneWireDeleter> ow;
     if (use_onewire) {
         ONEWIRE_MASTER::Config owcfg{};
-        owcfg.pin = 4;
+        owcfg.pin = cfg.onewire_pin;
         ow = ONEWIRE_MASTER::make(owcfg);
     }
-
-    static const int PWM_RANGE = 256;
 
     if (use_pwm) {
         for (int pin : {12, 13}) {
             bcm2835_gpio_fsel(pin, BCM2835_GPIO_FSEL_ALT0);
         }
-        bcm2835_pwm_set_clock(192);
+        bcm2835_pwm_set_clock(cfg.pwm_clock_divider);
         bcm2835_pwm_set_mode(0, 1, 1);
-        bcm2835_pwm_set_range(0, PWM_RANGE);
+        bcm2835_pwm_set_range(0, cfg.pwm_range);
         bcm2835_pwm_set_mode(1, 1, 1);
-        bcm2835_pwm_set_range(1, PWM_RANGE);
+        bcm2835_pwm_set_range(1, cfg.pwm_range);
     }
 
     std::time_t now_c = std::time(nullptr);
@@ -330,11 +388,13 @@ int main(int argc, char** argv) {
         std::cout << static_cast<int>(gpio_pins[i]);
     }
     std::cout << ")\n";
-    if (use_spi)    std::cout << "SPI enabled\n";
-    if (use_i2c)    std::cout << "I2C enabled\n";
-    if (use_uart)   std::cout << "UART enabled\n";
+    if (use_spi)    std::cout << "SPI enabled  (" << cfg.spi_speed_hz << " Hz)\n";
+    if (use_i2c)    std::cout << "I2C enabled  (divider " << cfg.i2c_clock_divider << ")\n";
+    if (use_uart)   std::cout << "UART enabled (" << cfg.uart_baud << " baud)\n";
     if (use_onewire) std::cout << "1-Wire enabled\n";
-    if (use_pwm)    std::cout << "PWM enabled (GPIO 12,13)\n";
+    if (use_pwm)    std::cout << "PWM enabled  (divider " << cfg.pwm_clock_divider
+                              << ", range " << cfg.pwm_range << ")\n";
+    std::cout << "Tick: " << cfg.tick_ms << "ms\n";
     std::cout << "Duration: " << duration_s << "s\n";
     std::cout << "Press Ctrl+C to stop.\n";
 
@@ -351,8 +411,8 @@ int main(int argc, char** argv) {
         PORT16::write_random(*port16);
 
         if (use_pwm) {
-            bcm2835_pwm_set_data(0, dist_val(rng) % PWM_RANGE);
-            bcm2835_pwm_set_data(1, dist_val(rng) % PWM_RANGE);
+            bcm2835_pwm_set_data(0, dist_val(rng) % cfg.pwm_range);
+            bcm2835_pwm_set_data(1, dist_val(rng) % cfg.pwm_range);
         }
 
         if (spi && phase == 0) {
@@ -377,14 +437,14 @@ int main(int argc, char** argv) {
         ++total_ticks;
         phase = (phase + 1) % 4;
 
-        const int TICK_MS = 10;
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start_time).count();
-        auto target = static_cast<long long>(total_ticks) * TICK_MS;
+        auto target = static_cast<long long>(total_ticks) * cfg.tick_ms;
         if (target > elapsed) {
             timespec ts{};
-            ts.tv_sec = 0;
-            ts.tv_nsec = (target - elapsed) * 1000000L;
+            long diff = static_cast<long>(target - elapsed);
+            ts.tv_sec = diff / 1000;
+            ts.tv_nsec = (diff % 1000) * 1000000L;
             nanosleep(&ts, nullptr);
         }
     }

@@ -20,7 +20,8 @@ $(APP): $(OBJ_DIR)/src/main.o \
        $(OBJ_DIR)/libs/spi_master/spi_master.o \
        $(OBJ_DIR)/libs/i2c_master/i2c_master.o \
        $(OBJ_DIR)/libs/uart_master/uart_master.o \
-       $(OBJ_DIR)/libs/onewire_master/onewire_master.o
+       $(OBJ_DIR)/libs/onewire_master/onewire_master.o \
+       $(OBJ_DIR)/libs/config/config.o
 	$(CC) $(CXXFLAGS) $(INCLUDES) -o $@ $^ $(LIBRARIES)
 	@echo "Binary created: $@"
 
